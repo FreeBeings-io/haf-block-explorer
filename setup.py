@@ -14,6 +14,8 @@ setup(
     install_requires=[
         'requests',
         'psycopg2-binary',
+        'jsonrpcserver == 5.0.9',
+        'aiohttp'
     ],
     entry_points = {
         'console_scripts': [
