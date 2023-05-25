@@ -78,6 +78,7 @@ CREATE OR REPLACE PROCEDURE haf_block_explorer.sync_main()
                             RAISE NOTICE 'Block range: <%, %> processed successfully.', _first_block, _last_block;
                             -- update global props and save
                             UPDATE haf_block_explorer.global_props SET check_in = NOW(), latest_block_num = _last_block, latest_block_time = _last_block_timestamp;
+                            DELETE FROM haf_block_explorer.witness_votes_current WHERE approve = false;
                             COMMIT;
                         END LOOP;
                         _begin := _target +1;
@@ -101,11 +102,17 @@ CREATE OR REPLACE FUNCTION haf_block_explorer.process_operation( _temprow RECORD
             _module_schema VARCHAR;
         BEGIN
             IF _temprow.op_type_id = 12 THEN
-                PERFORM haf_block_explorer.account_witness_vote_operation(_temprow.body);
+                PERFORM haf_block_explorer.account_witness_vote_operation(_temprow.block_num, _temprow.timestamp, _temprow.trx_hash, _temprow.body);
             ELSIF _temprow.op_type_id = 13 THEN
-                PERFORM haf_block_explorer.account_witness_proxy_operation(_temprow.body);
+                PERFORM haf_block_explorer.account_witness_proxy_operation(_temprow.block_num, _temprow.timestamp, _temprow.trx_hash, _temprow.body);
             ELSIF _temprow.op_type_id = 91 THEN
-                PERFORM haf_block_explorer.proxy_cleared(_temprow.body);
+                PERFORM haf_block_explorer.proxy_cleared(_temprow.block_num, _temprow.timestamp, _temprow.trx_hash, _temprow.body);
+            ELSIF _temprow.op_type_id = 40 THEN
+                PERFORM haf_block_explorer.process_create_deleg(_temprow.block_num, _temprow.timestamp, _temprow.trx_hash, _temprow.body);
+            ELSIF _temprow.op_type_id = 58 THEN
+                PERFORM haf_block_explorer.witness_shutdown_operation(_temprow.block_num, _temprow.timestamp, _temprow.trx_hash, _temprow.body);
+            ELSIF _temprow.op_type_id = 11 THEN
+                PERFORM haf_block_explorer.witness_update_operation(_temprow.block_num, _temprow.timestamp, _temprow.trx_hash, _temprow.body);
             END IF;
         END;
     $$;

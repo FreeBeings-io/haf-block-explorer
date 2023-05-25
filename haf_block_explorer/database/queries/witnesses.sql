@@ -1,50 +1,44 @@
-CREATE OR REPLACE FUNCTION haf_block_explorer.top_witnesses_by_weighted_votes_with_proxy(limit_count INTEGER)
+CREATE OR REPLACE FUNCTION haf_block_explorer.get_top_witnesses(n INT)
 RETURNS TABLE (
     witness VARCHAR,
-    total_weighted_votes BIGINT
+    votes NUMERIC
 ) AS $$
+DECLARE
+    balance BIGINT;
+    delegated_out_balance BIGINT;
+    delegated_in_balance BIGINT;
+    proxy_balance BIGINT;
+    account_balance BIGINT;
 BEGIN
-    RETURN QUERY
-    WITH proxy_weight AS (
-        SELECT
-            p.proxy,
-            SUM(cab.balance) AS proxy_total_weight
-        FROM
-            haf_block_explorer.account_witness_proxies p
-        JOIN
-            btracker_app.current_account_balances cab ON p.account = cab.account
-        WHERE
-            cab.nai = 37
-        GROUP BY
-            p.proxy
-    ),
-    account_votes AS (
-        SELECT
-            COALESCE(awp.proxy, awv.account) AS voter_account,
-            awv.witness
-        FROM
-            haf_block_explorer.account_witness_votes awv
-        LEFT JOIN
-            haf_block_explorer.account_witness_proxies awp ON awv.account = awp.account
-        WHERE
-            awv.approve = true
+    RETURN QUERY 
+    WITH vote_balances AS (
+        SELECT 
+            wv.witness,
+            cab.balance - COALESCE(db1.amount, 0) + COALESCE(db2.amount, 0) AS vote_balance
+        FROM haf_block_explorer.witness_votes_current AS wv
+        LEFT JOIN haf_block_explorer.account_proxies AS ap ON wv.account = ap.account
+        LEFT JOIN btracker_app.current_account_balances AS cab ON wv.account = cab.account AND cab.nai = 37
+        LEFT JOIN haf_block_explorer.delegations_balances AS db1 ON wv.account = db1.delegator
+        LEFT JOIN haf_block_explorer.delegations_balances AS db2 ON wv.account = db2.delegatee
+        WHERE ap.account IS NULL OR ap.proxy != wv.account
+        AND wv.enabled = true
+    ), proxy_balances AS (
+        SELECT 
+            wv.witness,
+            SUM(cab.balance) AS proxy_balance
+        FROM haf_block_explorer.witness_votes_current AS wv
+        JOIN haf_block_explorer.account_proxies AS ap ON wv.account = ap.account
+        JOIN btracker_app.current_account_balances AS cab ON ap.proxy = cab.account AND cab.nai = 37
+        WHERE wv.enabled = true
+        GROUP BY wv.witness
     )
-    SELECT
-        av.witness,
-        CAST(SUM(COALESCE(pw.proxy_total_weight, cab.balance)) AS BIGINT) AS total_weighted_votes
-    FROM
-        account_votes av
-    JOIN
-        btracker_app.current_account_balances cab ON av.voter_account = cab.account
-    LEFT JOIN
-        proxy_weight pw ON av.voter_account = pw.proxy
-    WHERE
-        cab.nai = 37
-    GROUP BY
-        av.witness
-    ORDER BY
-        total_weighted_votes DESC
-    LIMIT
-        limit_count;
-END;
-$$ LANGUAGE plpgsql;
+    SELECT 
+        vb.witness,
+        SUM(vb.vote_balance) + COALESCE(SUM(pb.proxy_balance), 0) AS votes
+    FROM vote_balances AS vb
+    LEFT JOIN proxy_balances AS pb ON vb.witness = pb.witness
+    GROUP BY vb.witness
+    ORDER BY votes DESC
+    LIMIT n;
+END; $$
+LANGUAGE 'plpgsql';
